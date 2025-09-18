@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assistente Vendite AI V9 (Commenti ai preferiti)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" xintegrity="sha512-ieo+vV6iB6xL5t2i/w5c6+hTz/x8P90Q5XG3w5a6G9xS0K5g5A8z/gD/A2f2fQ+2n5g==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            padding: 2rem;
+        }
+        .suggestion-card {
+            background-color: #ffffff;
+            border-left: 4px solid #10b981;
+            transition: transform 0.2s ease-in-out;
+        }
+        .suggestion-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        #imagePreview {
+            display: none;
+            max-width: 100%;
+            height: auto;
+            object-fit: contain;
+        }
+        .notification {
+            position: fixed;
+            top: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 1rem 2rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .notification.show {
+            opacity: 1;
+        }
+        .copy-btn, .save-btn, .export-btn, .like-btn, .dislike-btn {
+            background-color: transparent;
+            border: none;
+            color: #4b5563;
+            transition: color 0.2s, transform 0.2s;
+        }
+        .copy-btn:hover { color: #10b981; transform: scale(1.1); }
+        .save-btn:hover { color: #3b82f6; transform: scale(1.1); }
+        .like-btn:hover { color: #3b82f6; transform: scale(1.1); }
+        .dislike-btn:hover { color: #ef4444; transform: scale(1.1); }
+        .export-btn:hover { color: #34d399; transform: scale(1.1); }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.75);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        .modal-content {
+            background-color: #fff;
+            padding: 2rem;
+            border-radius: 0.75rem;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        .dark-mode {
+            background-color: #1a202c;
+            color: #e2e8f0;
+        }
+        .dark-mode .bg-white {
+            background-color: #2d3748;
+        }
+        .dark-mode .text-gray-800 {
+            color: #e2e8f0;
+        }
+        .dark-mode .text-gray-600 {
+            color: #a0aec0;
+        }
+        .dark-mode .border-gray-300 {
+            border-color: #4a5568;
+        }
+        .dark-mode .bg-gray-50 {
+            background-color: #4a5568;
+        }
+        .dark-mode .bg-gray-100 {
+            background-color: #2d3748;
+        }
+        .dark-mode .text-gray-500, .dark-mode .text-gray-400 {
+            color: #cbd5e0;
+        }
+        .dark-mode .copy-btn {
+            color: #cbd5e0;
+        }
+        .dark-mode .copy-btn:hover {
+            color: #10b981;
+        }
+        .dark-mode .modal-content {
+            background-color: #1a202c;
+            color: #e2e8f0;
+        }
+        .dark-mode .suggestion-card {
+            background-color: #2d3748;
+        }
+        .dark-mode .stats-card {
+            background-color: #2d3748;
+        }
+        .dark-mode .like-btn:hover { color: #3b82f6; }
+        .dark-mode .dislike-btn:hover { color: #ef4444; }
+
+        .sentiment-badge {
+            font-weight: bold;
+            padding: 0.25rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth, userId;
+        let base64Image = null;
+        let suggestionStats = { copied: 0, saved: 0 };
+        
+        const initFirebase = async () => {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                console.log("Firebase initialized.");
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                showModal("Si è verificato un problema con l'inizializzazione di Firebase. Riprova più tardi.");
+                return;
+            }
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    console.log("User signed in with UID:", userId);
+                    window.initApp();
+                } else {
+                    console.log("No user signed in. Signing in anonymously...");
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Sign-in failed:", error);
+                        showModal("Accesso utente fallito. Le funzionalità cloud potrebbero non essere disponibili.");
+                    }
+                }
+            });
+        };
+
+        // Gestione del caricamento del file al di fuori della funzione initApp
+        // per assicurare che il listener funzioni immediatamente, senza ritardi di autenticazione.
+        document.getElementById('chatScreenshot').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file && file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById('imagePreview').src = e.target.result;
+                    document.getElementById('imagePreview').style.display = 'block';
+                    base64Image = e.target.result.split(',')[1];
+                };
+                reader.readAsDataURL(file);
+            } else {
+                showModal("Per favore, seleziona un file di immagine valido (PNG, JPG o JPEG).");
+            }
+        });
+
+        const promptOptionsMap = {
+            "standard": "Analizza la chat e fornisci 3 risposte convincenti per far avanzare la conversazione verso la vendita.",
+            "closing": "Analizza la chat e fornisci 3 risposte dirette e persuasive per chiudere la vendita.",
+            "price_objection": "Analizza la chat e fornisci 3 risposte per superare l'obiezione del cliente sul prezzo, mostrando il valore del prodotto.",
+            "build_rapport": "Analizza la chat e fornisci 3 risposte per costruire fiducia e un rapporto solido con il cliente.",
+            "follow_up": "Analizza la chat e fornisci 3 risposte per riprendere il contatto con un cliente inattivo.",
+            "urgency": "Analizza la chat e fornisci 3 risposte per creare un senso di urgenza e spingere all'acquisto immediato.",
+            "value_add": "Analizza la chat e fornisci 3 risposte che offrono un valore aggiunto, come un bonus o una consulenza gratuita.",
+            "handling_loss": "Analizza la chat e fornisci 3 risposte per gestire un cliente insoddisfatto o che ha scelto un concorrente, cercando di recuperarlo in futuro."
+        };
+
+        const showModal = (message) => {
+            document.getElementById('modalMessage').textContent = message;
+            document.getElementById('errorModal').style.display = 'flex';
+        };
+
+        window.closeModal = () => {
+            document.getElementById('errorModal').style.display = 'none';
+        };
+
+        const showNotification = (message, type = 'info') => {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification show text-white ${type === 'error' ? 'bg-red-500' : 'bg-green-500'}`;
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        };
+
+        const showErrorMessage = (message) => {
+            document.getElementById('results').innerHTML = `<div class="p-4 bg-red-100 border-l-4 border-red-500 text-red-700 rounded-md dark:bg-red-800 dark:bg-opacity-25">
+                <p class="font-bold">Errore:</p>
+                <p>${message}</p>
+            </div>`;
+        };
+        
+        const updateStats = async (copied, saved) => {
+            if (!userId) return;
+            const statsRef = doc(db, `/artifacts/${appId}/users/${userId}/stats`, "stats_doc");
+            try {
+                await setDoc(statsRef, { copied, saved }, { merge: true });
+            } catch (error) {
+                console.error("Error updating stats:", error);
+            }
+        };
+
+        const getStats = async () => {
+            if (!userId) return;
+            const statsRef = doc(db, `/artifacts/${appId}/users/${userId}/stats`, "stats_doc");
+            try {
+                const docSnap = await getDoc(statsRef);
+                if (docSnap.exists()) {
+                    suggestionStats = docSnap.data();
+                    document.getElementById('copiedCount').textContent = suggestionStats.copied || 0;
+                    document.getElementById('savedCount').textContent = suggestionStats.saved || 0;
+                }
+            } catch (error) {
+                console.error("Error getting stats:", error);
+            }
+        };
+
+        const renderSavedSuggestions = () => {
+            if (!userId) return;
+            const savedSuggestionsDiv = document.getElementById('savedSuggestions');
+            const exportBtn = document.getElementById('exportBtn');
+            const savedCollectionRef = collection(db, `/artifacts/${appId}/users/${userId}/saved_suggestions`);
+            
+            onSnapshot(savedCollectionRef, (querySnapshot) => {
+                const suggestions = [];
+                querySnapshot.forEach((doc) => {
+                    suggestions.push({ id: doc.id, ...doc.data() });
+                });
+
+                if (suggestions.length === 0) {
+                    savedSuggestionsDiv.innerHTML = `<p class="text-gray-500 text-sm">I suggerimenti che salvi appariranno qui.</p>`;
+                    exportBtn.classList.add('hidden');
+                } else {
+                    savedSuggestionsDiv.innerHTML = suggestions.map(s => `
+                        <div class="suggestion-card p-4 rounded-lg shadow-sm border-gray-200">
+                            <div class="flex justify-between items-center mb-2">
+                                <p class="font-bold text-sm text-emerald-700">Preferito:</p>
+                                <button class="copy-btn" onclick="window.copyToClipboard(this)"><i class="fas fa-copy"></i></button>
+                            </div>
+                            <p class="text-gray-800 text-sm suggestion-text">${s.response}</p>
+                            <div class="mt-2 text-xs text-gray-500">
+                                <span class="font-semibold">Strategia:</span> ${s.strategy}
+                            </div>
+                            ${s.comment ? `<div class="mt-2 text-xs text-gray-600 italic">
+                                <span class="font-semibold not-italic">Commento:</span> "${s.comment}"
+                            </div>` : ''}
+                        </div>
+                    `).join('');
+                    exportBtn.classList.remove('hidden');
+                }
+            }, (error) => {
+                console.error("Error fetching saved suggestions:", error);
+                savedSuggestionsDiv.innerHTML = `<p class="text-red-500 text-sm">Errore nel caricamento dei suggerimenti salvati.</p>`;
+            });
+        };
+
+        const getSalesSuggestions = async (imageData, userPrompt) => {
+            const systemPrompt = "Sei un consulente di vendita esperto, calmo e deciso. Il tuo obiettivo è analizzare lo screenshot di una chat per fornire 3 risposte professionali, mirate e strategiche. Ogni risposta deve essere diretta, autorevole e focalizzata a far progredire la conversazione in modo risoluto. Analizza anche il tono del cliente e forniscine una valutazione (es. 'Positivo', 'Neutro', 'Negativo'). Rispondi solo con un array di oggetti JSON, dove ogni oggetto ha una chiave 'response' per il suggerimento, una chiave 'strategy' per la strategia di vendita, e una chiave 'sentiment' per il tono del cliente. Non aggiungere testo aggiuntivo o spiegazioni al di fuori dell'array JSON. Se non riesci a leggere lo screenshot, restituisci un array vuoto.";
+            
+            const payload = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: userPrompt },
+                        {
+                            inlineData: {
+                                mimeType: "image/png",
+                                data: imageData
+                            }
+                        }
+                    ]
+                }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                "response": { "type": "STRING" },
+                                "strategy": { "type": "STRING" },
+                                "sentiment": { "type": "STRING" }
+                            }
+                        }
+                    }
+                }
+            };
+
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            let response;
+            try {
+                for (let i = 0; i < 3; i++) {
+                    response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (response.ok) {
+                        break;
+                    }
+                    console.warn(`Request failed with status ${response.status}. Retrying in ${2 ** i} seconds...`);
+                    await new Promise(res => setTimeout(res, (2 ** i) * 1000));
+                }
+
+                if (!response.ok) {
+                    throw new Error(`API response was not ok: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                const candidate = result.candidates?.[0];
+                const jsonText = candidate?.content?.parts?.[0]?.text;
+
+                if (!jsonText) {
+                    throw new Error("No text found in the API response.");
+                }
+
+                try {
+                    const parsedJson = JSON.parse(jsonText);
+                    return parsedJson;
+                } catch (e) {
+                    console.error("Failed to parse JSON:", e, "Original text:", jsonText);
+                    throw new Error("Failed to parse the API response. Riprova più tardi.");
+                }
+
+            } catch (error) {
+                console.error("API request failed:", error);
+                throw new Error("Si è verificato un problema nella comunicazione con l'intelligenza artificiale. Riprova più tardi.");
+            }
+        };
+
+        const handleAnalysis = async () => {
+            if (!base64Image) {
+                showModal("Per favore, carica uno screenshot della chat.");
+                return;
+            }
+
+            document.getElementById('initial-message').classList.add('hidden');
+            document.getElementById('suggestions').style.display = 'block';
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('regenerateBtn').classList.add('hidden');
+
+            const selectedPrompt = promptOptionsMap[document.getElementById('promptSelect').value];
+
+            try {
+                const suggestions = await getSalesSuggestions(base64Image, selectedPrompt);
+                
+                if (suggestions && suggestions.length > 0) {
+                    const sentiment = suggestions[0].sentiment || 'Neutro';
+                    const sentimentClass = {
+                        'Positivo': 'bg-green-500',
+                        'Neutro': 'bg-yellow-500',
+                        'Negativo': 'bg-red-500',
+                        'Molto Positivo': 'bg-green-600',
+                        'Molto Negativo': 'bg-red-600'
+                    }[sentiment] || 'bg-gray-400';
+
+                    const sentimentHtml = `<div class="mb-4 p-3 rounded-lg flex items-center justify-between shadow-sm bg-gray-100 dark:bg-gray-700">
+                                            <p class="text-sm font-semibold">Tono del Cliente:</p>
+                                            <span class="sentiment-badge text-white ${sentimentClass}">${sentiment}</span>
+                                          </div>`;
+                    
+                    document.getElementById('results').innerHTML = sentimentHtml + suggestions.map((s, index) => `
+                        <div class="suggestion-card p-4 rounded-lg shadow-sm border-gray-200" data-index="${index}">
+                            <div class="flex justify-between items-center mb-2">
+                                <p class="font-bold text-sm text-emerald-700">Opzione ${index + 1}:</p>
+                                <div class="flex items-center space-x-2">
+                                    <button class="save-btn" onclick="window.saveSuggestion(this)"><i class="fas fa-heart text-gray-400 hover:text-red-500"></i></button>
+                                    <button class="copy-btn" onclick="window.copyToClipboard(this)"><i class="fas fa-copy"></i></button>
+                                </div>
+                            </div>
+                            <p class="text-gray-800 text-sm suggestion-text">${s.response}</p>
+                            <div class="mt-2 text-xs text-gray-500">
+                                <span class="font-semibold">Strategia:</span> ${s.strategy}
+                            </div>
+                        </div>
+                    `).join('');
+                    document.getElementById('regenerateBtn').classList.remove('hidden');
+                } else {
+                    showErrorMessage("L'IA non è riuscita a generare suggerimenti. Assicurati che il testo della chat sia leggibile e riprova.");
+                }
+
+            } catch (error) {
+                showErrorMessage(error.message);
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+            }
+        };
+
+        window.initApp = () => {
+            document.getElementById('analyzeBtn').addEventListener('click', handleAnalysis);
+            document.getElementById('regenerateBtn').addEventListener('click', handleAnalysis);
+            document.getElementById('darkModeToggle').addEventListener('change', (event) => {
+                document.body.classList.toggle('dark-mode', event.target.checked);
+            });
+            document.getElementById('exportBtn').addEventListener('click', async () => {
+                const savedSuggestionsRef = collection(db, `/artifacts/${appId}/users/${userId}/saved_suggestions`);
+                const querySnapshot = await getDocs(savedSuggestionsRef);
+                const suggestions = [];
+                querySnapshot.forEach(doc => suggestions.push(doc.data()));
+                
+                const content = JSON.stringify(suggestions, null, 2);
+                const blob = new Blob([content], { type: 'application/json' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = 'suggerimenti_salvati.json';
+                link.click();
+                URL.revokeObjectURL(link.href);
+                showNotification('Suggerimenti esportati in JSON!');
+            });
+            document.getElementById('userIdDisplay').textContent = `ID Utente: ${userId}`;
+            renderSavedSuggestions();
+            getStats();
+        };
+
+        window.copyToClipboard = (button) => {
+            const textToCopy = button.closest('.suggestion-card').querySelector('.suggestion-text').textContent;
+            const tempInput = document.createElement('textarea');
+            tempInput.value = textToCopy;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            showNotification('Testo copiato!');
+            suggestionStats.copied++;
+            updateStats(suggestionStats.copied, suggestionStats.saved);
+            document.getElementById('copiedCount').textContent = suggestionStats.copied;
+        };
+
+        window.saveSuggestion = async (button) => {
+            if (!userId) {
+                showModal("Per salvare un suggerimento, devi essere autenticato. Riprova più tardi.");
+                return;
+            }
+            const card = button.closest('.suggestion-card');
+            const response = card.querySelector('.suggestion-text').textContent;
+            const strategy = card.querySelector('.text-xs').textContent.replace('Strategia: ', '');
+            
+            const savedCollectionRef = collection(db, `/artifacts/${appId}/users/${userId}/saved_suggestions`);
+            
+            const q = query(savedCollectionRef, where("response", "==", response));
+            const querySnapshot = await getDocs(q);
+            
+            if (querySnapshot.empty) {
+                const comment = prompt("Aggiungi un commento (opzionale):");
+                await addDoc(savedCollectionRef, {
+                    response,
+                    strategy,
+                    comment: comment || '',
+                    timestamp: new Date().toISOString()
+                });
+                showNotification('Suggerimento salvato!');
+                suggestionStats.saved++;
+                updateStats(suggestionStats.copied, suggestionStats.saved);
+                document.getElementById('savedCount').textContent = suggestionStats.saved;
+            } else {
+                showNotification('Suggerimento già salvato.', 'error');
+            }
+        };
+
+        const chatContainer = document.getElementById('simChatContainer');
+        const simInput = document.getElementById('simInput');
+        const simSendBtn = document.getElementById('simSendBtn');
+        let chatHistory = [];
+
+        const appendMessage = (sender, text) => {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `p-3 rounded-xl mb-2 max-w-[80%] ${sender === 'user' ? 'bg-blue-500 text-white self-end rounded-br-none' : 'bg-gray-200 text-gray-800 self-start rounded-bl-none'}`;
+            messageDiv.textContent = text;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        };
+
+        const handleSimSend = async () => {
+            const userMessage = simInput.value.trim();
+            if (userMessage === '') return;
+            appendMessage('user', userMessage);
+            chatHistory.push({ role: 'user', content: userMessage });
+            simInput.value = '';
+
+            const response = await getAIAssistantResponse(chatHistory);
+            chatHistory.push({ role: 'assistant', content: response });
+            appendMessage('assistant', response);
+        };
+
+        const getAIAssistantResponse = async (history) => {
+            const systemPrompt = "Sei un cliente in una simulazione di vendita. Rispondi in modo realistico e convincente alle domande e proposte del venditore (l'utente). Puoi essere indeciso, avere obiezioni sul prezzo, o essere entusiasta. Rispondi con una frase o due, senza essere troppo prolisso.";
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            const payload = {
+                contents: history.map(msg => ({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] })),
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+            return result.candidates?.[0]?.content?.parts?.[0]?.text || "Non ho capito, puoi ripetere?";
+        };
+        
+        simSendBtn.addEventListener('click', handleSimSend);
+        simInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleSimSend();
+        });
+
+        document.getElementById('showMain').addEventListener('click', () => {
+            document.getElementById('mainPage').classList.remove('hidden');
+            document.getElementById('favoritesPage').classList.add('hidden');
+            document.getElementById('simulationPage').classList.add('hidden');
+        });
+        document.getElementById('showFavorites').addEventListener('click', () => {
+            document.getElementById('mainPage').classList.add('hidden');
+            document.getElementById('favoritesPage').classList.remove('hidden');
+            document.getElementById('simulationPage').classList.add('hidden');
+            renderSavedSuggestions();
+        });
+        document.getElementById('showSimulation').addEventListener('click', () => {
+            document.getElementById('mainPage').classList.add('hidden');
+            document.getElementById('favoritesPage').classList.add('hidden');
+            document.getElementById('simulationPage').classList.remove('hidden');
+        });
+
+        // Avvio del Firebase e dell'app.
+        initFirebase();
+    </script>
+
+    <div class="notification" id="notification"></div>
+    <div class="modal-overlay" id="errorModal">
+        <div class="modal-content text-center">
+            <h3 class="text-xl font-bold text-red-600 mb-4">Attenzione!</h3>
+            <p id="modalMessage" class="text-gray-700 mb-6"></p>
+            <button onclick="window.closeModal()" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600 transition-colors">Chiudi</button>
+        </div>
+    </div>
+
+    <div class="container py-8">
+        <header class="text-center mb-6">
+            <h1 class="text-4xl font-bold text-gray-800">Assistente Vendite AI</h1>
+            <p class="mt-2 text-md text-gray-600">Il tuo coach personale per migliorare le vendite.</p>
+            <div class="mt-4 flex justify-center items-center space-x-2">
+                <i class="fas fa-sun text-gray-400"></i>
+                <label class="switch">
+                    <input type="checkbox" id="darkModeToggle">
+                    <span class="slider round"></span>
+                </label>
+                <i class="fas fa-moon text-gray-400"></i>
+            </div>
+            <p id="userIdDisplay" class="mt-2 text-xs text-gray-400"></p>
+        </header>
+
+        <!-- Navigazione a schede -->
+        <div class="flex justify-center mb-8">
+            <button id="showMain" class="p-3 border-b-2 border-emerald-500 text-emerald-500 font-bold mx-2">Analisi Chat</button>
+            <button id="showFavorites" class="p-3 border-b-2 border-transparent text-gray-500 font-bold mx-2 hover:text-emerald-500 transition-colors">I miei suggerimenti</button>
+            <button id="showSimulation" class="p-3 border-b-2 border-transparent text-gray-500 font-bold mx-2 hover:text-emerald-500 transition-colors">Simulatore</button>
+        </div>
+
+        <!-- Pagina Principale -->
+        <div id="mainPage">
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Sezione sinistra: Caricamento e Analisi -->
+                <div class="bg-white shadow-xl rounded-2xl p-6 md:p-8">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">Carica la chat</h2>
+                    <div class="space-y-4 mb-6">
+                        <label for="chatScreenshot" class="block text-gray-700 font-medium">Screenshot della chat:</label>
+                        <div class="flex items-center justify-center w-full">
+                            <label for="chatScreenshot" class="flex flex-col items-center justify-center w-full h-48 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                                <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                                    <svg class="w-10 h-10 mb-3 text-gray-400" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
+                                        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.207l-.73.73A4.985 4.985 0 0 0 5 13h3m1.5-6v7m-3-3L10 17.5 12.5 14"/>
+                                    </svg>
+                                    <p class="mb-2 text-sm text-gray-500"><span class="font-semibold">Clicca per caricare</span> o trascina qui</p>
+                                    <p class="text-xs text-gray-500">PNG, JPG, JPEG</p>
+                                </div>
+                                <input id="chatScreenshot" type="file" class="hidden" accept="image/png, image/jpeg, image/jpg" />
+                            </label>
+                        </div>
+                        <img id="imagePreview" class="mt-4 rounded-lg shadow-md" alt="Anteprima screenshot chat">
+
+                        <div class="mt-6">
+                            <label for="promptSelect" class="block text-gray-700 font-medium mb-2">Scegli la strategia di vendita:</label>
+                            <select id="promptSelect" class="w-full border border-gray-300 rounded-lg p-3 focus:ring-emerald-500 focus:border-emerald-500">
+                                <option value="standard">Analisi standard</option>
+                                <option value="closing">Chiudi la vendita</option>
+                                <option value="price_objection">Gestisci obiezioni sul prezzo</option>
+                                <option value="build_rapport">Costruisci fiducia</option>
+                                <option value="follow_up">Fai un follow-up</option>
+                                <option value="urgency">Crea urgenza</option>
+                                <option value="value_add">Offri valore aggiunto</option>
+                                <option value="handling_loss">Gestisci la perdita</option>
+                            </select>
+                        </div>
+
+                        <button id="analyzeBtn" class="w-full bg-emerald-500 text-white font-bold py-3 px-6 rounded-lg shadow-md hover:bg-emerald-600 transition-colors transform hover:scale-105 mt-6">
+                            Analizza e Suggerisci
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Sezione destra: Suggerimenti e risultati -->
+                <div class="bg-white shadow-xl rounded-2xl p-6 md:p-8">
+                    <div id="suggestions" class="space-y-4">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-2xl font-bold text-gray-800">Suggerimenti dell'AI</h2>
+                            <button id="regenerateBtn" class="hidden bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-gray-300 transition-colors transform hover:scale-105">
+                                Rigenera
+                            </button>
+                        </div>
+                        
+                        <p id="initial-message" class="text-gray-500 text-sm">I suggerimenti per la chat appariranno qui dopo l'analisi.</p>
+                        <div id="loading" class="text-center my-8 hidden">
+                            <div class="w-12 h-12 border-4 border-t-4 border-gray-200 border-t-emerald-500 rounded-full animate-spin mx-auto"></div>
+                            <p class="mt-2 text-gray-500">Analisi in corso...</p>
+                        </div>
+                        <div id="results" class="space-y-4"></div>
+                    </div>
+                </div>
+            </div>
+            <!-- Statistiche di utilizzo -->
+            <div class="mt-12 bg-white shadow-xl rounded-2xl p-6 md:p-8 stats-card">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">Le mie Statistiche</h2>
+                <div class="grid grid-cols-2 gap-4 text-center">
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-emerald-500" id="copiedCount">0</p>
+                        <p class="text-gray-500">Suggerimenti copiati</p>
+                    </div>
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-emerald-500" id="savedCount">0</p>
+                        <p class="text-gray-500">Suggerimenti salvati</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pagina dei Preferiti -->
+        <div id="favoritesPage" class="hidden">
+            <div class="bg-white shadow-xl rounded-2xl p-6 md:p-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-gray-800">I miei suggerimenti preferiti</h2>
+                    <button id="exportBtn" class="bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-gray-300 transition-colors transform hover:scale-105 hidden">
+                        Esporta in JSON
+                    </button>
+                </div>
+                <div id="savedSuggestions" class="space-y-4">
+                    <p class="text-gray-500 text-sm">I suggerimenti che salvi appariranno qui.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pagina Simulazione -->
+        <div id="simulationPage" class="hidden">
+            <div class="bg-white shadow-xl rounded-2xl p-6 md:p-8">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">Simulatore di Trattativa</h2>
+                <div id="simChatContainer" class="h-[500px] overflow-y-auto p-4 border border-gray-300 rounded-lg flex flex-col mb-4">
+                    <div class="p-3 rounded-xl mb-2 bg-gray-200 text-gray-800 self-start rounded-bl-none max-w-[80%]">Ciao! Iniziamo la simulazione. Come posso aiutarti?</div>
+                </div>
+                <div class="flex space-x-2">
+                    <input type="text" id="simInput" placeholder="Digita qui la tua risposta..." class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-emerald-500 focus:border-emerald-500">
+                    <button id="simSendBtn" class="bg-emerald-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-emerald-600 transition-colors">Invia</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Avviso di simulazione -->
+        <footer class="mt-8 text-center text-xs text-gray-400">
+            Questa è una simulazione a scopo dimostrativo. Non integra servizi di chat reali e non deve essere utilizzata con dati sensibili.
+        </footer>
+    </div>
+</body>
+</html>
+
